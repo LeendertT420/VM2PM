@@ -1,197 +1,245 @@
-import hid
 import time
+import os
 import struct
+import hid
+
+# Texas Instruments DLPC350 Identification
+VENDOR_ID  = 0x0451
+PRODUCT_ID = 0x6401  # Used for both application and flashing mode
+
 
 class DLPC350Controller:
-    VENDOR_ID = 0x0451
-    PRODUCT_ID = 0x6401
-
     def __init__(self):
-        self.device = None
-        self.sequence_num = 0x00
+        self.dev = None
 
     def connect(self):
-        try:
-            self.device = hid.device()
-            self.device.open(self.VENDOR_ID, self.PRODUCT_ID)
-            self.device.set_nonblocking(1)
-            print("[DLPC350] Connected successfully.")
-        except Exception as e:
-            raise RuntimeError(f"Failed to connect to DLPC350 USB Device: {e}")
+        """
+        Connects specifically to Interface 0 (MI_00) of VID 0x0451 / PID 0x6401.
+        """
+        self.dev = hid.device()
+        target_path = None
 
-    def disconnect(self):
-        if self.device:
-            self.device.close()
-            print("[DLPC350] Disconnected.")
+        # Scan for TI DLPC350 USB devices and target Interface 0
+        for device_info in hid.enumerate(VENDOR_ID, PRODUCT_ID):
+            if device_info.get('interface_number') in (0, -1):
+                target_path = device_info['path']
+                break
 
-    def _send_packet(self, mode: str, cmd2: int, cmd3: int, data: list = None):
-        if data is None:
-            data = []
-        payload_len = len(data) + 2
+        if target_path:
+            try:
+                self.dev.open_path(target_path)
+                self.dev.set_nonblocking(1)
+                print(f"[USB] Connected to DLPC350 (PID: 0x{PRODUCT_ID:04X}, Interface 0)")
+                return True
+            except IOError as e:
+                print(f"[USB] Connection error: {e}")
+                return False
+        else:
+            print(f"[USB] DLPC350 Interface 0 not found. Check physical USB connection.")
+            return False
+
+    def close(self):
+        """Closes the HID device handle."""
+        if self.dev:
+            try:
+                self.dev.close()
+            except Exception:
+                pass
+            self.dev = None
+
+    def _send_command(self, cmd2, cmd3, payload=None, rw=0, programming_mode=False):
+        """
+        Translates TI C++ USB protocol into raw 65-byte USB HID report packets.
+        - Normal Mode: Control Flags = 0x40
+        - Flash/Programming Mode: Control Flags = 0x47 (Subcode 0x7 active)
+        """
+        if payload is None:
+            payload = []
         
-        # 0xC0 for Read (Bit 7=1, Bit 6=1), 0x40 for Write (Bit 6=1 for reply/ack)
-        rw_flag = 0xC0 if mode == 'r' else 0x40
+        dest_subcode = 0x07 if programming_mode else 0x00
+        flags = (rw << 7) | 0x40 | dest_subcode
         
-        header = [
-            0x00, # Report ID
-            rw_flag,
-            self.sequence_num,
-            payload_len & 0xFF,
-            (payload_len >> 8) & 0xFF,
-            cmd2,
-            cmd3
-        ]
-        packet = header + data
+        length = len(payload) + 2  # CMD2 + CMD3 + Payload length
+        
+        packet = [
+            0x00,                 # USB Report ID
+            flags,                # Control Flags
+            0x00,                 # Sequence Number
+            length & 0xFF,        # Length LSB
+            (length >> 8) & 0xFF, # Length MSB
+            cmd3,                 # TI CMD3
+            cmd2                  # TI CMD2
+        ] + list(payload)
+        
+        # Pad to standard 65-byte USB HID packet length
         packet += [0x00] * (65 - len(packet))
-
-        self.device.write(packet)
-        self.sequence_num = (self.sequence_num + 1) % 256
-        time.sleep(0.01)
-
-        # If it's a read command, read the response back from the USB endpoint
-        if mode == 'r':
-            response = self.device.read(64)
-            return response
-
-
-    def set_display_mode(self, pattern_mode: bool = True):
-        """0x01 = Pattern Display Mode, 0x00 = Video Mode"""
-        mode = 0x01 if pattern_mode else 0x00
-        self._send_packet('w', 0x1A, 0x1B, [mode])
-
-    def stop_pattern_sequence(self):
-        """Stop pattern display sequence (0x00 = Stop)"""
-        self._send_packet('w', 0x1A, 0x24, [0x00])
-
-    def start_pattern_sequence(self):
-        """Start pattern display sequence (0x02 = Start)"""
-        self._send_packet('w', 0x1A, 0x24, [0x02])
-
-    def set_pattern_input_source(self, source: int = 0):
-        """0 = Internal Flash, 1 = Video Port"""
-        self._send_packet('w', 0x1A, 0x22, [source])
-
-    def set_pattern_trigger_mode(self, mode: int = 1):
-        """
-        0 = VSYNC (Requires active video cable)
-        1 = Internal Timer / External Trig
-        """
-        self._send_packet('w', 0x1A, 0x23, [mode])
-
-    def configure_pattern_timing(self, exposure_us: int, period_us: int):
-        """Exposure & Period in microseconds."""
-        data = list(struct.pack('<II', exposure_us, period_us))
-        self._send_packet('w', 0x1A, 0x29, data)
-
-    def validate_pattern_sequence(self):
-        """
-        MANDATORY STEP: Requests DLPC350 controller to validate LUT configuration.
-        """
-        self._send_packet('w', 0x1A, 0x1A, [0x00])
-        time.sleep(0.05)
-
-    def program_sequence(self, num_patterns: int, bit_depth: int = 1, enable_leds: bool = True):
-        """
-        Full sequence setup: Stops current pattern, programs LUT mailboxes,
-        validates the payload, and readies execution.
-        """
-        # 1. Halt active execution & set mode
-        self.stop_pattern_sequence()
-        self.set_display_mode(pattern_mode=True)
-        self.set_pattern_input_source(source=0)  # Internal Flash
-        self.set_pattern_trigger_mode(mode=1)     # Mode 1: Internal Trigger
-
-        # 2. Open LUT Mailbox for Pattern Definition (CMD3: 0x33, Value: 0x02)
-        self._send_packet('w', 0x1A, 0x33, [0x02])
         
-        # 3. Reset LUT Pointer (CMD3: 0x32)
-        self._send_packet('w', 0x1A, 0x32, [0x00])
+        self.dev.write(packet)
+        time.sleep(0.02)  # Hardware processing window
 
-        # 4. Fill LUT Mailbox (CMD3: 0x34)
-        # LED Select: 0b111 (RGB ON for visual testing) or 0b000 (Laser Pass-through)
-        led_flags = 0b111 if enable_leds else 0b000
+    # -------------------------------------------------------------------------
+    # PHASE 1: FIRMWARE BINARY PREPARATION
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def build_firmware(stock_bin_path, bmp_folder, output_bin_path):
+        """
+        Checks for existing binary or verifies stock binary paths.
+        """
+        print("\n--- Phase 1: Preparing Firmware Binary ---")
         
-        for pat_idx in range(num_patterns):
-            b0 = pat_idx & 0xFF
-            b1 = (bit_depth & 0x07) | (led_flags << 3)
-            
-            # Buffer swap on first pattern
-            b2 = 0x01 if pat_idx == 0 else 0x00
-            
-            self._send_packet('w', 0x1A, 0x34, [b0, b1, b2])
+        # If custom compiled firmware already exists, use it
+        if os.path.exists(output_bin_path):
+            print(f"[Build] Found compiled binary: '{output_bin_path}'")
+            return output_bin_path
 
-        # 5. Close LUT Mailbox (CMD3: 0x33, Value: 0x00)
-        self._send_packet('w', 0x1A, 0x33, [0x00])
+        if not os.path.exists(stock_bin_path):
+            raise FileNotFoundError(f"Stock base binary '{stock_bin_path}' not found!")
 
-        # 6. Configure Pattern LUT Execution Parameters (CMD3: 0x31)
-        # [num_lut_entries_lsb, msb, do_repeat (0=repeat, 1=once), num_pats, num_flash_images]
+        # Otherwise copy base firmware to destination path
+        with open(stock_bin_path, 'rb') as f_in:
+            fw_data = f_in.read()
+
+        with open(output_bin_path, 'wb') as f_out:
+            f_out.write(fw_data)
+
+        print(f"[Build] Prepared firmware file: '{output_bin_path}'")
+        return output_bin_path
+
+    # -------------------------------------------------------------------------
+    # PHASE 2: FIRMWARE FLASHING (Bootloader Stream)
+    # -------------------------------------------------------------------------
+    def flash_firmware(self, bin_path):
+        """
+        Switches board into programming mode, erases SPI flash, and writes firmware blocks.
+        """
+        print("\n--- Phase 2: Uploading Firmware to Board ---")
+        
+        # 1. Stop active pattern display engine FIRST
+        print("[Flash] Stopping active display engine...")
+        self._send_command(0x1A, 0x24, [0x00])
+        time.sleep(0.5)
+
+        # 2. Request Programming Mode with EMPTY payload [] (0 data bytes)
+        print("[Flash] Requesting Programming Mode transition...")
+        self._send_command(0x30, 0x01, payload=[0x01])
+        time.sleep(2.0)
+
+        # Visual Verification Gate
+        print("[Flash] Verifying hardware state...")
+        print(">> Note: The DMD light output MUST turn off before proceeding.")
+
+        with open(bin_path, 'rb') as f:
+            firmware_bytes = f.read()
+
+        # 3. SPI Flash Erase Command (CMD 0x30 0x02)
+        print("[Flash] Erasing onboard SPI Flash...")
+        self._send_command(0x30, 0x02, programming_mode=True)
+        time.sleep(3.0)
+
+        # 4. Stream binary data in 512-byte blocks (CMD 0x30 0x03)
+        block_size = 512
+        total_blocks = (len(firmware_bytes) + block_size - 1) // block_size
+
+        print(f"[Flash] Writing {len(firmware_bytes)} bytes ({total_blocks} blocks)...")
+        for i in range(total_blocks):
+            chunk = firmware_bytes[i * block_size : (i + 1) * block_size]
+            self._send_command(0x30, 0x03, list(chunk), programming_mode=True)
+            
+            if i % 100 == 0 or i == total_blocks - 1:
+                progress = ((i + 1) / total_blocks) * 100
+                print(f"Flashing Progress: {progress:.1f}%", end="\r")
+
+        # 5. Issue Software Reset Command (CMD 0x08 0x02) to reboot
+        print("\n[Flash] Upload Complete! Rebooting DLPC350...")
+        self._send_command(0x08, 0x02)
+        time.sleep(5.0)
+        self.close()
+
+    # -------------------------------------------------------------------------
+    # PHASE 3: PATTERN SEQUENCE & LUT CONFIGURATION
+    # -------------------------------------------------------------------------
+    def configure_and_start_sequence(self, num_patterns=8, exposure_us=100000, period_us=100000):
+        """
+        Sets Pattern Display mode, populates Flash Image LUT, and starts playback.
+        """
+        print("\n--- Phase 3: Configuring & Starting Pattern Sequence ---")
+        
+        # 1. Stop active pattern display (0x1A 0x24)
+        print("[LUT] Stopping current sequences...")
+        self._send_command(0x1A, 0x24, [0x00])
+
+        # 2. Set Pattern Display Mode to 'Pattern Sequence from Flash' (0x1A 0x1B)
+        print("[LUT] Setting Mode: Pattern Sequence Mode...")
+        self._send_command(0x1A, 0x1B, [0x00])
+
+        # 3. Set Trigger Mode to Internal Trigger (0x1A 0x0A)
+        print("[LUT] Setting Trigger: Internal...")
+        self._send_command(0x1A, 0x0A, [0x00])
+
+        # 4. Open Pattern LUT Mailbox for writing (0x1A 0x31)
+        print(f"[LUT] Configuring LUT Header for {num_patterns} patterns...")
         lut_config = [
             num_patterns & 0xFF, (num_patterns >> 8) & 0xFF,
-            0x00,  # 0x00 = Continuous Repeat
-            num_patterns & 0xFF, (num_patterns >> 8) & 0xFF,
-            0x01, 0x00  # Number of flash images used
+            0x01,  # Repeat continuously
+            num_patterns & 0xFF, (num_patterns >> 8) & 0xFF
         ]
-        self._send_packet('w', 0x1A, 0x31, lut_config)
+        self._send_command(0x1A, 0x31, lut_config)
 
-        # 7. Validate sequence setup
-        self.validate_pattern_sequence()
+        # 5. Populate LUT entries for each 8-bit flash image (0x1A 0x34)
+        print("[LUT] Populating LUT entries (Indices 0 through 7)...")
+        for idx in range(num_patterns):
+            lut_entry = [
+                0x01,        # Internal Trigger + Green LED
+                idx & 0xFF,  # Flash Image Index
+                0x08         # 8-bit depth
+            ]
+            self._send_command(0x1A, 0x34, lut_entry)
 
+        # 6. Set Exposure & Frame Period timing (0x1A 0x29)
+        exp_bytes = list(struct.pack('<I', exposure_us))
+        prd_bytes = list(struct.pack('<I', period_us))
+        self._send_command(0x1A, 0x29, exp_bytes + prd_bytes)
 
-    def get_hardware_status(self):
-        """CMD2: 0x1A, CMD3: 0x0A"""
-        response = self._send_packet('r', 0x1A, 0x0A)
-        if response:
-            # The data payload starts after the header (usually at index 6 or 7 depending on your HID library's return format)
-            print(f"[DLPC350] Hardware Status Response: {response}")
-            return response
-        else:
-            print("[DLPC350] No response received.")
-            return None
+        # 7. Validate Sequence (0x1A 0x1A)
+        print("[LUT] Validating settings with DLPC350...")
+        self._send_command(0x1A, 0x1A)
+        time.sleep(0.1)
 
-
-    def set_input_source_test_pattern(self):
-        """
-        Input Source Selection (CMD2: 0x1A, CMD3: 0x00)
-        Data: 0x01 = Internal test pattern
-        """
-        # Ensure we are in Video Mode first
-        self.set_display_mode(pattern_mode=False) 
-        
-        # Set source to Internal test pattern (0x01)
-        # We also need to send the parallel interface bit depth for the second byte. 
-        # Using 0x01 (Internal Pattern) and 0x00 (30-bits) as safe defaults.
-        self._send_packet('w', 0x1A, 0x00, [0x01, 0x00])
-
-    def set_test_pattern_checkerboard(self):
-        """
-        Internal Test Patterns Select (CMD2: 0x12, CMD3: 0x03)
-        Data: 0x07 = Checkerboard
-        """
-        self._send_packet('w', 0x12, 0x03, [0x07])
+        # 8. Start Pattern Sequence Playback (0x1A 0x24)
+        print("[LUT] Starting Playback!")
+        self._send_command(0x1A, 0x24, [0x02])
+        print("\n sequence running successfully!")
 
 
-# Execution Example
+# -----------------------------------------------------------------------------
+# MAIN EXECUTION SCRIPT
+# -----------------------------------------------------------------------------
 if __name__ == "__main__":
-    dmd = DLPC350Controller()
+    STOCK_FIRMWARE  = "DLPR350PROM_v3.0.0.bin"
+    CUSTOM_FIRMWARE = "banana_firmware.bin"
+    BMP_DIRECTORY   = "dlp_patterns"
+
+    dlp = DLPC350Controller()
+
     try:
-        dmd.connect()
+        # Step 1: Ensure firmware binary path is ready
+        firmware_file = dlp.build_firmware(STOCK_FIRMWARE, BMP_DIRECTORY, CUSTOM_FIRMWARE)
 
-        print(dmd.get_hardware_status())
-        dmd.set_input_source_test_pattern()
-        dmd.set_test_pattern_checkerboard()
-        time.sleep(3)
-        
-        # Set timing: 50 ms exposure time (visible to human eye)
-        dmd.configure_pattern_timing(exposure_us=50000, period_us=50000)
+        # Step 2: Connect and Upload Firmware
+        if dlp.connect():
+            dlp.flash_firmware(firmware_file)
 
-        # Program 8 stored flash patterns with RGB LEDs ON for testing
-        dmd.program_sequence(num_patterns=8, bit_depth=1, enable_leds=True)
+        # Step 3: Reconnect (post-reboot) and Start Banana Animation
+        if not dlp.dev:
+            dlp.connect()
 
-        print("[DLPC350] Validation sent. Starting sequence...")
-        dmd.start_pattern_sequence()
+        dlp.configure_and_start_sequence(
+            num_patterns=8,
+            exposure_us=100000,  # 100 ms exposure
+            period_us=100000     # 100 ms frame period
+        )
 
-        time.sleep(5) # Let it play for 5 seconds
-
+    except Exception as err:
+        print(f"\n Automation Error: {err}")
     finally:
-        dmd.stop_pattern_sequence()
-        dmd.disconnect()
+        dlp.close()

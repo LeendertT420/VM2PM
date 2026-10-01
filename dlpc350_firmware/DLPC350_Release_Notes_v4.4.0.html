@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<!-- Meta data -->
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+
+		<title>Release Notes</title>
+		
+		<!-- Bootstrap Components -->
+		<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">
+
+		<!-- Some TI written CSS to customize the page -->
+		<style>
+			.navbar-inverse {
+				background-color: #c00000;
+				border-color: #c00000;
+			}
+			.navbar-inverse .navbar-brand {
+				color:  white;
+			}
+			.navbar-inverse .navbar-nav li a {
+				color:  white;
+			}
+			footer a {
+				color: black;
+			}
+			hr {
+				margin-top: 0em;
+				margin-bottom: 0em;
+			}
+			table {
+			  font-family: arial, sans-serif;
+			  border-collapse: collapse;
+			  width: 100%;
+			}
+
+			td, th {
+			  border: 1px solid #dddddd;
+			  text-align: left;
+			  padding: 8px;
+			}
+
+			
+		</style>
+
+		
+	</head>
+
+
+	<body>
+		<nav class="navbar navbar-inverse">
+			<div class="container">
+				<div class="navbar-header">
+					<!--<img src="ti_logo.png" alt="" height="32" width="32">-->
+					<a class="navbar-brand" href="http://www.ti.com">Texas Instruments</a> 
+				</div>
+
+				<div class="collapse navbar-collapse" id="myNavbar">
+
+					<ul class="nav navbar-nav navbar-right">
+							<li><a href="http://www.ti.com/dlp-chip/display-and-projection/pico-chipsets/overview.html"> DLP&reg; Pico&trade; Products</a></li>
+
+							<li><a href="http://www.ti.com/dlp-chip/overview.html">DLP Home</a></li>
+					</ul>
+					
+				</div>
+			</div>
+		</nav>
+
+		<div class="container">
+			<h2 align="center">DLPC350 Firmware v4.4.0 Release Notes</h2>
+			<h3>Table of Contents</h3>
+			<hr>
+			<br>
+			<ul>
+				<li><a href="#overview">Overview</a></li>
+				<li><a href="#supportedfeatures">Supported Features</a></li>
+				<li><a href="#knownissues">Known Issues</a></li>
+				<li><a href="#updates">Updates in this Release</a></li>
+				<li><a href="#techsupport">Technical Support and Product Updates</a></li>
+			</ul>
+			<br>
+
+			<h3 id="overview">Overview</h3>
+			<hr>
+			<br>
+			<p>This binary file is used to configure the DLPC350 DMD Controller at power up. It enables the 0.45 WXGA chipset to display high speed, native resolution patterns with user selectable bit depths, pattern rates and exposure time. To be used with system with the following configuration:</p>
+			<ul>
+				<li>DMD: DLP4500</li>
+				<li>Controller: DLPC350</li>
+				<li>Illumination: 3-LED (RGB)
+				<li>I<sup>2</sup>C Address: 0x34</li>
+			</ul>
+			<p>Release Information:</p>
+			<ul>
+				<li>Firmware Version: 4.4.0</li>
+			</ul>
+			<br>
+
+			<h3 id="supportedfeatures">Supported Features</h3>
+			<hr><br>
+			This firmware supports Pattern mode (Pixel accurate mode) and regular video
+			projection.	
+			<br>
+			<ul> 
+			<br>
+				<li><b>Structured light mode:</b></li>
+					<ul>
+						<li>Pixel Accurate Mode with no video processing</li>
+						<li>One-to-One Mapping of Input Data to Micromirrors</li>
+						<li>1-Bit Binary Pattern Rates up to 4225 Hz</li>
+						<li>8-Bit Gray Pattern Rates up to 120 Hz</li>
+						<li>Combination of 1-bit to 8-bit patterns with user defined Pattern Exposures</li>
+						
+						
+					</ul>
+					<br>
+					<li><b>Video Projection Mode:</b></li>
+					<ul>
+						<li>Programmable color space coordinate adjustment</li>
+						<li>Programmable color space conversion</li>
+						<li>Programmable Degamma</li>
+						<li>Spatial-Temporal Multiplexing (Dithering)</li>
+					</ul>
+				<br>
+				
+
+			<h3 id="knownissues">Known Issues</h3>
+			<hr>
+			<br>
+			<ul>
+				<li>Displaying more than 1 pattern in external trigger mode will not work properly under the following condition i.e., display more than one pattern with a single external trigger with condition Pattern Period > Pattern Exposure by > 230us. Workaround - Keep Pattern Period = Pattern Exposure;for inserting dark time select Clear DMD after exposure option this will automatically insert 230us dark time.</li>
+				<li>Pausing and resuming the pattern sequence in Variable Pattern Exposure/Pattern Exposure mode causes the colors to shift by one pattern.</li>
+				<li>Cannot go from “Paused” state to “Stop” state while running pattern sequence. Need to start first and then stop.</li>
+				<li>Pausing during first pattern from a splash and resuming sometimes switches to next splash (legacy issue). </li>
+				<li>FPDLink Invert Data Option does not work. </li>
+				<li>FPDLink Pixel Mode 4 does not work. </li>
+				<li>DLPC350 FPD Link and Parallel RGB 8-bit Input modes are not supported. Customers are advised to always set Full 30Bit Input and then define pattern sequences with only the required bits.</li>
+				
+			</ul>
+			<br>
+
+			<h3 id="updates">Updates in this Release</h3>
+			<hr>
+			<br>
+			<ul>
+				<li><b>Release v4.4.0</b></li> 
+    			<ul>
+    				<li>Fixed issue where GPIO Clock cannot be enabled.</li>
+					<li>Fixed issue where green LED would turn ON in StandBy mode when Video mode command is issued.</li>
+					<li>Fixed YUV format support for external parallel sources.</li>
+					
+					
+    			</ul>
+				</li>
+				<br>
+			</ul>
+			<br>
+			
+			<h3 id="techsupport">Technical Support and Product Updates</h3>
+			<hr>
+			<br>
+			<ul>
+				<li><a href="http://www.ti.com/lit/ug/dlpu010g/dlpu010g.pdf">DLPC350 Software Programmer's Guide</a></li>
+				<li><a href="http://e2e.ti.com/support/dlp/f/94">DLP Products&reg; E2E Forums</a></li>
+				<li><a href="http://www.ti.com/dlp-chip/getting-started.html">DLP Products&reg; - Getting Started</a></li>
+				<li><a href="http://www.ti.com/dlp-chip/display-and-projection/pico-chipsets/overview.html">DLP Pico Products overview</a></li>
+				<li><a href="http://www.ti.com/product/DLPC350">DLPC350 Controller</a></li>
+				<li><a href="http://www.ti.com/product/DLP4500">DLP4500 DMD</a></li>
+			</ul>
+			<br>
+		</div>
+
+		
+	</body>
+	<footer id="tiFooter">
+		<br>
+		<br>
+		<div class="container">
+			<p>TI is a global semiconductor design and manufacturing company. Innovate
+			with 100,000+ analog ICs and embedded processors, along with software, tools
+			and the industry‘s largest sales/support staff.</p>
+			<p>
+			<a href="http://www.ti.com/corp/docs/legal/copyright.shtml">© Copyright 1995-2020</a>, Texas Instruments Incorporated. All rights reserved. <br>
+			<a href="http://www.ti.com/corp/docs/legal/trademark/trademrk.htm">Trademarks</a> | <a href="http://www.ti.com/corp/docs/legal/privacy.shtml">Privacy policy</a> | <a href="http://www.ti.com/corp/docs/legal/termsofuse.shtml">Terms of use</a> | <a href="http://www.ti.com/lsds/ti/legal/termsofsale.page">Terms of sale</a>
+			</p>
+		</div>
+	</footer>
+
+
+</html>

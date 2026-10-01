@@ -1,4 +1,5 @@
 import pycrafter4500
+import time
 
 import usb.core
 
@@ -11,10 +12,14 @@ for dev in devices:
 
 pycrafter4500.power_up()
 
+time.sleep(5)
+
 pycrafter4500.pattern_mode(num_pats=3,
                            fps=222,
                            bit_depth=7,
                            led_color=0b111,  # BGR flags                 
                            )
+
+time.sleep(5)
 
 pycrafter4500.power_down()
